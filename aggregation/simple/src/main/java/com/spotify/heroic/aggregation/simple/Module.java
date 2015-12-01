@@ -30,6 +30,7 @@ import javax.inject.Named;
 
 import com.spotify.heroic.HeroicContext;
 import com.spotify.heroic.HeroicModule;
+import com.spotify.heroic.aggregation.AbstractAggregationDSL;
 import com.spotify.heroic.aggregation.Aggregation;
 import com.spotify.heroic.aggregation.AggregationArguments;
 import com.spotify.heroic.aggregation.AggregationFactory;
@@ -43,6 +44,8 @@ import eu.toolchain.serializer.Serializer;
 import eu.toolchain.serializer.SerializerFramework;
 
 public class Module implements HeroicModule {
+    // @formatter:off
+
     @Override
     public Entry setup() {
         return new Entry() {
@@ -124,9 +127,65 @@ public class Module implements HeroicModule {
                         return new Quantile(Optional.empty(), size, extent, q, error);
                     }
                 });
+
+                ctx.aggregation(TopK.NAME, TopKInstance.class, TopK.class,
+                    new Serializer<TopKInstance>() {
+                        final Serializer<Long> fixedLong = s.fixedLong();
+
+                        @Override
+                        public void serialize(SerialWriter buffer,
+                                              TopKInstance topKInstance) throws IOException {
+
+                            fixedLong.serialize(buffer, topKInstance.getK());
+                        }
+
+                        @Override
+                        public TopKInstance deserialize(SerialReader serialReader)
+                            throws IOException {
+                            final long k = fixedLong.deserialize(serialReader);
+                            return new TopKInstance(k);
+                        }
+                    }, new AbstractAggregationDSL(factory) {
+                        @Override
+                        public Aggregation build(AggregationArguments args) {
+                            final int k = args.positional(Long.class)
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                    "missing required argument 'k'")).intValue();
+
+                            return new TopK(k);
+                        }
+                    });
+
+                ctx.aggregation(BottomK.NAME, BottomKInstance.class, BottomK.class,
+                    new Serializer<BottomKInstance>() {
+                        final Serializer<Long> fixedLong = s.fixedLong();
+
+                        @Override
+                        public void serialize(SerialWriter buffer,
+                                              BottomKInstance bottomKInstance) throws IOException {
+
+                            fixedLong.serialize(buffer, bottomKInstance.getK());
+                        }
+
+                        @Override
+                        public BottomKInstance deserialize(SerialReader serialReader)
+                            throws IOException {
+                            final long k = fixedLong.deserialize(serialReader);
+                            return new BottomKInstance(k);
+                        }
+                    }, new AbstractAggregationDSL(factory) {
+                        @Override
+                        public Aggregation build(AggregationArguments args) {
+                            final int k = args.positional(Long.class)
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                    "missing required argument 'k'")).intValue();
+
+                            return new BottomK(k);
+                        }
+                    });
             }
 
-            private <T extends BucketAggregationInstance<?>> Serializer<T> samplingSerializer(
+            private <T extends BucketAggregationInstance< ?>> Serializer<T> samplingSerializer(
                     BiFunction<Long, Long, T> builder) {
                 final Serializer<Long> fixedLong = s.fixedLong();
 
@@ -158,6 +217,8 @@ public class Module implements HeroicModule {
             }
         };
     }
+
+    // @formatter:on
 
     interface SamplingBuilder<T> {
         T apply(Optional<SamplingQuery> sampling, Optional<Duration> size,
