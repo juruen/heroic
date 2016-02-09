@@ -26,31 +26,31 @@ import com.spotify.heroic.aggregation.AggregationSerializer;
 import eu.toolchain.serializer.SerialReader;
 import eu.toolchain.serializer.SerialWriter;
 import eu.toolchain.serializer.Serializer;
-import eu.toolchain.serializer.SerializerFramework;
 
 import java.io.IOException;
 
-public abstract class  FilterKSerializer<T extends FilterKInstance> implements Serializer<T> {
-    private final Serializer<Long> fixedLong;
+public abstract class FilterSerializer<T extends FilterKInstance>
+    implements Serializer<T> {
     private final AggregationSerializer serializer;
 
-    public FilterKSerializer(SerializerFramework framework, AggregationSerializer serializer) {
-        this.fixedLong = framework.fixedLong();
+    public FilterSerializer(AggregationSerializer serializer) {
         this.serializer = serializer;
     }
 
     @Override
     public void serialize(SerialWriter buffer, T t) throws IOException {
-        fixedLong.serialize(buffer, t.getK());
         serializer.serialize(buffer, t.getOf());
+        this.serializeNext(buffer, t);
     }
 
     @Override
-    public T deserialize(SerialReader serialReader) throws IOException {
-        final long k = fixedLong.deserialize(serialReader);
-        final AggregationInstance of = serializer.deserialize(serialReader);
-        return build(k, of);
+    public T deserialize(SerialReader buffer) throws IOException {
+        final AggregationInstance of = serializer.deserialize(buffer);
+        return deserializeNext(buffer, of);
     }
 
-    protected abstract T build(long k, AggregationInstance of);
+    protected abstract void serializeNext(SerialWriter buffer, T value) throws IOException;
+
+    protected abstract T deserializeNext(SerialReader buffer, AggregationInstance of)
+        throws IOException;
 }

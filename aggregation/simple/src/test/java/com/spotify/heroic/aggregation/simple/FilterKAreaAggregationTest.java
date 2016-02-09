@@ -20,18 +20,15 @@ import org.mockito.runners.MockitoJUnitRunner;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
 
 @RunWith(MockitoJUnitRunner.class)
-public class FilterKAggregationTest {
+public class FilterKAreaAggregationTest {
 
     @Test
-    public void testFilterKSession() {
+    public void testFilterKAreaSession() {
         final GroupingAggregation g1 = new GroupInstance(
             Optional.of(ImmutableList.of("site", "host")), EmptyInstance.INSTANCE);
         final GroupingAggregation g2 =

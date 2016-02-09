@@ -29,12 +29,12 @@ import com.spotify.heroic.common.DateRange;
 
 import java.util.List;
 
-public class BottomKInstance implements FilterKInstance {
-    private final FilterKAreaStrategy strategy;
+public class BelowKInstance implements FilterKInstance {
+    private final FilterKThresholdStrategy strategy;
     private final FilterAggregation aggregation;
 
-    public BottomKInstance(long k, AggregationInstance of) {
-        strategy = new FilterKAreaStrategy(FilterKAreaStrategy.FilterType.BOTTOM, k);
+    public BelowKInstance(double k, AggregationInstance of) {
+        strategy = new FilterKThresholdStrategy(FilterKThresholdStrategy.FilterType.BELOW, k);
         aggregation = new FilterAggregation(strategy, of);
     }
 
@@ -63,7 +63,7 @@ public class BottomKInstance implements FilterKInstance {
         return aggregation.getOf();
     }
 
-    public long getK() {
+    public double getK() {
         return strategy.getK();
     }
 }

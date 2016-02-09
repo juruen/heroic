@@ -38,39 +38,23 @@ import com.spotify.heroic.metric.MetricGroup;
 import com.spotify.heroic.metric.Point;
 import com.spotify.heroic.metric.ShardedResultGroup;
 import com.spotify.heroic.metric.Spread;
-import lombok.Data;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-public class FilterKInstanceImpl implements FilterKInstance {
+public class FilterAggregation implements AggregationInstance {
     private final AggregationInstance of;
+    private final FilterStrategy filterStrategy;
 
-    public enum FilterType {
-        TOP,
-        BOTTOM
-    }
-    private final long k;
-
-    private final FilterType filterType;
-    public FilterKInstanceImpl(long k, FilterType filterType, final AggregationInstance of) {
-        this.k = k;
-        this.filterType = checkNotNull(filterType, "filterType");
+    public FilterAggregation(final FilterStrategy filterStrategy, final AggregationInstance of) {
+        this.filterStrategy = checkNotNull(filterStrategy, "filterStrategy");
         this.of = checkNotNull(of, "of");
     }
 
-    @Override
-    public long getK() {
-        return k;
-    }
-
-    @Override
     public AggregationInstance getOf() {
         return of;
     }
@@ -88,38 +72,34 @@ public class FilterKInstanceImpl implements FilterKInstance {
     @Override
     public AggregationTraversal session(List<AggregationState> states, DateRange range) {
         final AggregationSession child = of.session(states, range).getSession();
-        return new AggregationTraversal(states, new Session(k, filterType, child));
+        return new AggregationTraversal(states, new Session(filterStrategy, child));
     }
 
     @Override
     public ReducerSession reducer(DateRange range) {
-        return new FilterKReducerSession(of.reducer(range), k, filterType);
+        return new FilterKReducerSession(filterStrategy, of.reducer(range));
     }
 
     @Override
     public AggregationCombiner combiner(DateRange range) {
         return all -> {
-            final List<FilterableKMetrics<ShardedResultGroup>> filterableMetrics =
+            final List<FilterableMetrics<ShardedResultGroup>> filterableMetrics =
                 of.combiner(range)
                     .combine(all)
                     .stream()
-                    .map(s -> new FilterableKMetrics<>(s, s::getGroup))
+                    .map(s -> new FilterableMetrics<>(s, s::getGroup))
                     .collect(Collectors.toList());
 
-            return FilterK.filter(filterableMetrics, filterType, k);
+            return filterStrategy.filter(filterableMetrics);
         };
     }
 
-    private static class Session implements AggregationSession {
-        private final long k;
-        private final FilterType filterType;
+    private class Session implements AggregationSession {
         private final AggregationSession childSession;
+        private final FilterStrategy operation;
 
-        public Session(long k,
-                       FilterType filterType,
-                       AggregationSession childSession) {
-            this.k = k;
-            this.filterType = filterType;
+        public Session(FilterStrategy operation, AggregationSession childSession) {
+            this.operation = operation;
             this.childSession = childSession;
         }
 
@@ -149,30 +129,27 @@ public class FilterKInstanceImpl implements FilterKInstance {
 
         @Override
         public AggregationResult result() {
-            final List<AggregationData> result = FilterK.filter(getFilterableAggregationData(),
-                filterType, k);
+            final List<AggregationData> result = operation.filter(getFilterableAggregationData());
 
             return new AggregationResult(result, childSession.result().getStatistics());
         }
 
-        private List<FilterableKMetrics<AggregationData>> getFilterableAggregationData() {
+        private List<FilterableMetrics<AggregationData>> getFilterableAggregationData() {
             return childSession.result().getResult()
                 .stream()
                 .map(a -> new AggregationData(a.getGroup(), a.getSeries(), a.getMetrics()))
-                .map(a -> new FilterableKMetrics<>(a, a::getMetrics))
+                .map(a -> new FilterableMetrics<>(a, a::getMetrics))
                 .collect(Collectors.toList());
         }
     }
 
     private static class FilterKReducerSession implements ReducerSession {
         private final ReducerSession childReducer;
-        private final long k;
-        private final FilterType filterType;
+        private final FilterStrategy filterStrategy;
 
-        public FilterKReducerSession(ReducerSession reducer, long k, FilterType filterType) {
+        public FilterKReducerSession(FilterStrategy filterStrategy, ReducerSession reducer) {
+            this.filterStrategy = filterStrategy;
             this.childReducer = reducer;
-            this.k = k;
-            this.filterType = filterType;
         }
 
         @Override
@@ -197,79 +174,15 @@ public class FilterKInstanceImpl implements FilterKInstance {
 
         @Override
         public ReducerResult result() {
-            final List<FilterableKMetrics<MetricCollection>> filterableKMetrics =
+            final List<FilterableMetrics<MetricCollection>> filterableMetrics =
                 childReducer.result()
                     .getResult()
                     .stream()
-                    .map(m -> new FilterableKMetrics<>(m, () -> m))
+                    .map(m -> new FilterableMetrics<>(m, () -> m))
                     .collect(Collectors.toList());
 
-            return new ReducerResult(FilterK.filter(filterableKMetrics, filterType, k),
+            return new ReducerResult(filterStrategy.filter(filterableMetrics),
                 childReducer.result().getStatistics());
         }
     }
-
-    @Data
-    private static class FilterableKMetrics<T> {
-        private final T data;
-        private final Supplier<MetricCollection> metricSupplier;
-    }
-
-    private static class FilterK<T> {
-        private final List<FilterableKMetrics<T>> metrics;
-        private final FilterType filterType;
-        private final long k;
-
-        public static <T> List<T> filter(List<FilterableKMetrics<T>> metrics,
-                                         FilterType filterType, long k) {
-            return new FilterK<>(metrics, filterType, k).apply();
-        }
-
-        private FilterK(List<FilterableKMetrics<T>> metrics, FilterType filterType, long k) {
-            this.metrics = metrics;
-            this.filterType = filterType;
-            this.k = k;
-        }
-
-        private List<T> apply() {
-            return metrics.stream()
-                .map(Area::new)
-                .sorted(buildCompare(filterType))
-                .limit(k)
-                .map(Area::getFilterableKMetrics)
-                .map(FilterableKMetrics::getData)
-                .collect(Collectors.toList());
-        }
-
-        private Comparator<Area> buildCompare(FilterType filterType) {
-            return (Area a, Area b) -> {
-                final Comparator<Double> comparator = Double::compare;
-
-                if (filterType == FilterType.TOP) {
-                    return comparator.reversed().compare(a.getValue(), b.getValue());
-                } else {
-                    return comparator.compare(a.getValue(), b.getValue());
-                }
-            };
-        }
-
-        @Data
-        private class Area {
-            private final FilterableKMetrics<T> filterableKMetrics;
-            private final double value;
-
-            public Area(FilterableKMetrics<T> filterableKMetrics) {
-                this.filterableKMetrics = filterableKMetrics;
-                this.value = computeArea(filterableKMetrics.getMetricSupplier().get());
-            }
-
-            private Double computeArea(MetricCollection metrics) {
-                return metrics.getDataAs(Point.class)
-                    .stream()
-                    .map(Point::getValue)
-                    .reduce(0D, (a, b) -> a + b);
-            }
-        }
-    }
-
 }
